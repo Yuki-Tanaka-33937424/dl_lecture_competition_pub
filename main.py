@@ -12,6 +12,7 @@ from tqdm import tqdm
 from src.datasets import ThingsMEGDataset
 from src.models import BasicConvClassifier
 from src.utils import set_seed
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -19,8 +20,8 @@ def run(args: DictConfig):
     set_seed(args.seed)
     logdir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     
-    if args.use_wandb:
-        wandb.init(mode="online", dir=logdir, project="MEG-classification")
+    if args.use_wandb and not args.debug:
+        wandb.init(mode="online", dir=logdir, project="MEG-classification", entity="yuki_tanaka")
 
     # ------------------
     #    Dataloader
@@ -49,14 +50,23 @@ def run(args: DictConfig):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # ------------------
+    #    Scheduler
+    # ------------------
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+    # ------------------
     #   Start training
     # ------------------  
     max_val_acc = 0
     accuracy = Accuracy(
         task="multiclass", num_classes=train_set.num_classes, top_k=10
     ).to(args.device)
+    if args.debug:
+        epochs = 1
+    else:
+        epochs = args.epochs
       
-    for epoch in range(args.epochs):
+    for epoch in range(epochs):
         print(f"Epoch {epoch+1}/{args.epochs}")
         
         train_loss, train_acc, val_loss, val_acc = [], [], [], []
@@ -96,7 +106,9 @@ def run(args: DictConfig):
             cprint("New best.", "cyan")
             torch.save(model.state_dict(), os.path.join(logdir, "model_best.pt"))
             max_val_acc = np.mean(val_acc)
-            
+        
+        # Scheduler step
+        scheduler.step()
     
     # ----------------------------------
     #  Start evaluation with best model

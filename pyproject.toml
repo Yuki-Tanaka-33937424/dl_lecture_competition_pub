@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "dl-lecture-competition-pub"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = {path = "torch-2.0.1+cu118-cp310-cp310-linux_x86_64.whl"}
+torchmetrics = "^1.4.0.post0"
+hydra-core = "^1.3.2"
+wandb = "^0.17.2"
+termcolor = "^2.4.0"
+einops = "^0.8.0"
+tqdm = "^4.66.4"
+numpy = "^1.26.4"
+mne = "^1.7.1"
+albumentations = "^1.4.10"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
