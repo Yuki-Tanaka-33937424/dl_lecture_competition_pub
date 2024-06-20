@@ -27,12 +27,14 @@ def run(args: DictConfig):
     #    Dataloader
     # ------------------
     loader_args = {"batch_size": args.batch_size, "num_workers": args.num_workers}
+    mean = -0.0066
+    std = 2.5331
     
-    train_set = ThingsMEGDataset("train", args.data_dir)
+    train_set = ThingsMEGDataset("train", args.data_dir, mean=mean, std=std)
     train_loader = torch.utils.data.DataLoader(train_set, shuffle=True, **loader_args)
-    val_set = ThingsMEGDataset("val", args.data_dir)
+    val_set = ThingsMEGDataset("val", args.data_dir, mean=mean, std=std)
     val_loader = torch.utils.data.DataLoader(val_set, shuffle=False, **loader_args)
-    test_set = ThingsMEGDataset("test", args.data_dir)
+    test_set = ThingsMEGDataset("test", args.data_dir, mean=mean, std=std)
     test_loader = torch.utils.data.DataLoader(
         test_set, shuffle=False, batch_size=args.batch_size, num_workers=args.num_workers
     )
@@ -99,7 +101,7 @@ def run(args: DictConfig):
 
         print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {np.mean(val_loss):.3f} | val acc: {np.mean(val_acc):.3f}")
         torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
-        if args.use_wandb:
+        if args.use_wandb and not args.debug:
             wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": np.mean(val_loss), "val_acc": np.mean(val_acc)})
         
         if np.mean(val_acc) > max_val_acc:
