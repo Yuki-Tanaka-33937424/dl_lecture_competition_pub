@@ -1,6 +1,7 @@
 import os, sys
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics import Accuracy
 import hydra
@@ -12,7 +13,44 @@ from tqdm import tqdm
 from src.datasets import ThingsMEGDataset
 from src.models import BasicConvClassifier
 from src.utils import set_seed
+from src.transformer import BasicTransformerClassifier
 from torch.optim.lr_scheduler import CosineAnnealingLR
+
+
+class EarlyStopping:
+    def __init__(self, patience=5, verbose=False, delta=0, path='checkpoint.pt'):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+        self.delta = delta
+        self.path = path
+
+    def __call__(self, val_loss, model):
+        score = -val_loss
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+        elif score < self.best_score + self.delta:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
+
+    def save_checkpoint(self, val_loss, model):
+        '''Saves model when validation loss decrease.'''
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+        torch.save(model.state_dict(), self.path)
+        self.val_loss_min = val_loss
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -42,9 +80,23 @@ def run(args: DictConfig):
     # ------------------
     #       Model
     # ------------------
+    # if args.debug:
+    #     model = BasicConvClassifier(
+    #         train_set.num_classes, train_set.seq_len, train_set.num_channels
+    #     ).to(args.device)
+    # else:
+
+    #     model = BasicTransformerClassifier(
+    #         num_classes=1854,
+    #         seq_len=281,
+    #         in_channels=271,
+    #         dim=512,
+    #         dropout=0.1
+    #     ).to(args.device)
+    
     model = BasicConvClassifier(
-        train_set.num_classes, train_set.seq_len, train_set.num_channels
-    ).to(args.device)
+            train_set.num_classes, train_set.seq_len, train_set.num_channels
+        ).to(args.device)
 
     # ------------------
     #     Optimizer
@@ -54,7 +106,17 @@ def run(args: DictConfig):
     # ------------------
     #    Scheduler
     # ------------------
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
+
+    # ------------------
+    # Early Stopping
+    # ------------------
+    early_stopping = EarlyStopping(patience=5, verbose=True, path=os.path.join(logdir, "checkpoint.pt"))
+
+    # # ------------------
+    # #   Criterion
+    # # ------------------
+    # criterion = nn.CrossEntropyLoss()
 
     # ------------------
     #   Start training
@@ -64,7 +126,7 @@ def run(args: DictConfig):
         task="multiclass", num_classes=train_set.num_classes, top_k=10
     ).to(args.device)
     if args.debug:
-        epochs = 1
+        epochs = 3
     else:
         epochs = args.epochs
       
@@ -99,10 +161,11 @@ def run(args: DictConfig):
             val_loss.append(F.cross_entropy(y_pred, y).item())
             val_acc.append(accuracy(y_pred, y).item())
 
-        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {np.mean(val_loss):.3f} | val acc: {np.mean(val_acc):.3f}")
+        val_loss_mean = np.mean(val_loss)
+        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {val_loss_mean:.3f} | val acc: {np.mean(val_acc):.3f}")
         torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
         if args.use_wandb and not args.debug:
-            wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": np.mean(val_loss), "val_acc": np.mean(val_acc)})
+            wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": val_loss_mean, "val_acc": np.mean(val_acc)})
         
         if np.mean(val_acc) > max_val_acc:
             cprint("New best.", "cyan")
@@ -111,6 +174,13 @@ def run(args: DictConfig):
         
         # Scheduler step
         scheduler.step()
+
+        # Early Stopping step
+        early_stopping(val_loss_mean, model)
+        
+        if early_stopping.early_stop:
+            print("Early stopping")
+            break
     
     # ----------------------------------
     #  Start evaluation with best model
